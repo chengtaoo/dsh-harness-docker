@@ -16,6 +16,13 @@ PASS=0; FAIL=0
 try() {
   local name="$1"; local payload="$2"
   local code body
+
+  # A payload that failed to build would be sent as an empty body and read as a
+  # server rejection, which is a false positive. Refuse to run it instead.
+  if [ -z "$payload" ]; then
+    printf '  \033[33m跳过\033[0m  %-42s (载荷为空，未发送)\n' "$name"; return
+  fi
+
   body=$(curl -s -m 60 -w '\n__CODE__%{http_code}' "$URL" \
     -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
     -d "$payload" 2>&1)
@@ -44,10 +51,12 @@ echo "── 第 2 组：dsh 特有的消息结构 ─────────�
 
 try "连续两条 user（dsh 的运行时上下文注入）" "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a helpful assistant.\"},{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"user\",\"content\":\"Current runtime context. This snapshot supersedes earlier ones.\"}],\"max_tokens\":16}"
 
-try "长 system（4500 字符，接近 dsh 实际）" "$(node -e "
-const s='You are an AI agent powered by DeepSeek Harness. '.repeat(100);
-process.stdout.write(JSON.stringify({model:process.argv[1],messages:[{role:'system',content:s},{role:'user',content:'hi'}],max_tokens:16}))
-" "$MODEL")"
+# 纯 bash 构造长文本，避免依赖 node（服务器上通常没装）
+LONG_SYSTEM=""
+for _ in $(seq 1 100); do LONG_SYSTEM="${LONG_SYSTEM}You are an AI agent powered by DeepSeek Harness. "; done
+try "长 system（约 4500 字符）" "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"$LONG_SYSTEM\"},{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":16}"
+
+try "三条消息（dsh 的真实形状：system+user+user）" "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"system\",\"content\":\"$LONG_SYSTEM\"},{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"user\",\"content\":\"Current runtime context. This snapshot supersedes earlier runtime-context snapshots. Current DSH file policy: workspace-write. Approval policy: ask.\"}],\"max_tokens\":16}"
 
 echo
 echo "── 第 3 组：dsh 会带的可选字段 ──────────────────────────"

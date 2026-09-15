@@ -9,6 +9,7 @@ import fs from 'node:fs'
 
 const PORT = Number(process.argv[2] ?? 11434)
 const OUT = process.argv[3] ?? 'C:/tmp/dsh-request.json'
+let biggest = 0
 
 const server = http.createServer((req, res) => {
   if (req.url?.startsWith('/v1/models')) {
@@ -30,12 +31,20 @@ const server = http.createServer((req, res) => {
         record.headers[k] = k === 'authorization' ? String(v).slice(0, 12) + '...' : v
       }
       try { record.body = JSON.parse(body) } catch { record.body = body }
+      record.raw = body
       // Append every request: a session makes several, and the interesting one
       // (the main agent turn) is not necessarily the last.
       let all = []
       try { all = JSON.parse(fs.readFileSync(OUT, 'utf8')) } catch { /* first write */ }
       all.push(record)
       fs.writeFileSync(OUT, JSON.stringify(all, null, 2))
+
+      // Keep the biggest request verbatim: replaying it against the real
+      // endpoint reproduces the failure exactly, which is what bisection needs.
+      if (body.length > biggest) {
+        biggest = body.length
+        fs.writeFileSync(`${OUT}.replay.json`, body)
+      }
 
       // Answer in a way that lets dsh finish its turn, so we capture the real
       // request rather than a retry.
