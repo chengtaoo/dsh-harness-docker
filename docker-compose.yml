@@ -46,6 +46,13 @@ services:
       DSH_LLM_THINKING_FORMAT: "${DSH_LLM_THINKING_FORMAT:-}"
       DSH_LLM_REASONING_EFFORT: "${DSH_LLM_REASONING_EFFORT:-}"
 
+      # ── 非回环访问的设置页修复 ──────────────────────────────────────────
+      # 同事用内网 IP 访问时，dsh 会把设置子系统降级为不可用，导致
+      # 「设置 → 模型」报 "settings are unavailable in this browser"。
+      # 设为 1 可以让网关在发送客户端代码时修正这一判断。
+      # 详见 README「非回环访问」一节。
+      GATEWAY_ENABLE_LAN_SETTINGS: "${GATEWAY_ENABLE_LAN_SETTINGS:-}"
+
       # ── 配置归属 ────────────────────────────────────────────────────────
       # 默认（留空）：同事可在界面上自行改模型，改动保留。
       # 设为 1：每次启动都用 .env 重新生成，同事改不动（管理员统一管控）。

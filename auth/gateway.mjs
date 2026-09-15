@@ -49,6 +49,7 @@ const PORT_BASE = Number(process.env.GATEWAY_INSTANCE_PORT_BASE ?? 3100)
 const AUTH_DISABLED = process.env.GATEWAY_AUTH_DISABLED === '1'
 const DSH_BIN = process.env.DSH_BIN ?? '/app/node_modules/@deepseek-ai/dsh/lib/bin.js'
 const ANONYMOUS_KEY = '__anonymous__'
+const LAN_SETTINGS_PATCH = process.env.GATEWAY_ENABLE_LAN_SETTINGS === '1'
 
 const COOKIE_NAME = 'dsh_gw'
 const MAX_LOGIN_FAILURES = 10
@@ -451,14 +452,75 @@ function readBody(req, limit = 8192) {
   })
 }
 
+/* ── LAN settings patch ──────────────────────────────────────────────────── */
+
+/**
+ * dsh offers its settings subsystem only to pages it judges loopback:
+ *
+ *     isLoopback: transport?.ownsHost === true || pageLocation === void 0
+ *               || isLoopbackHostname(pageLocation.hostname)
+ *
+ * `pageLocation` is `window.location`, so a colleague opening the UI at
+ * `http://<server>:8080` is never loopback. The settings mirror then runs in
+ * "memory" mode, where `ensure()` returns without loading anything, and the
+ * Models page reports "settings are unavailable in this browser".
+ *
+ * Only `ui-settings` and `ui-settings-general` read that flag, and it guards no
+ * security boundary — it selects a storage mode. Forcing it true restores the
+ * settings surface for LAN users. Each user already owns a separate instance
+ * and DSH_HOME, so a colleague editing models edits only their own.
+ *
+ * This rewrites generated code, so it is opt-in and fail-safe: a bundle is only
+ * altered when the exact source line still matches, and the original bytes are
+ * served otherwise, which is what happens if a dsh upgrade changes that line.
+ */
+const LAN_SETTINGS_PATCHES = [{
+  find: 'isLoopback: transport?.ownsHost === true || pageLocation === void 0'
+    + ' || isLoopbackHostname(pageLocation.hostname),',
+  replace: 'isLoopback: true,',
+}]
+
+let patchApplied = false
+
+/**
+ * Client bundles are the only assets a patch can land in.
+ *
+ * Their paths are `/plugins/??<package>/client.js&rev=<hash>` — note the `??`
+ * and the `&rev=` suffix, so this cannot be matched by splitting on `?` or by
+ * testing for a `.js` suffix. `/plugins/events` (the HMR SSE stream) and the
+ * static assets deliberately do not match.
+ */
+function isPatchableAsset(url) {
+  if (!LAN_SETTINGS_PATCH) return false
+  return typeof url === 'string'
+    && url.startsWith('/plugins/')
+    && url.includes('/client.js')
+}
+
+/**
+ * Apply every matching patch to one bundle body.
+ * @returns the rewritten text, or undefined when nothing matched.
+ */
+function applyLanSettingsPatch(text) {
+  let out = text
+  let applied = 0
+  for (const patch of LAN_SETTINGS_PATCHES) {
+    if (!out.includes(patch.find)) continue
+    out = out.replaceAll(patch.find, patch.replace)
+    applied += 1
+  }
+  return applied > 0 ? out : undefined
+}
+
 /* ── proxy ───────────────────────────────────────────────────────────────── */
 
 /**
  * Rewrite every request onto the instance's loopback authority. dsh binds its
  * authentication cookie to the Host authority and fences /api on Host/Origin,
  * so both must agree with the authority the cookie was minted for.
+ * @param plain - ask upstream for an uncompressed body, which a patch needs.
  */
-function buildUpstreamHeaders(req, instance) {
+function buildUpstreamHeaders(req, instance, { plain = false } = {}) {
   const headers = { ...req.headers }
   headers.host = instance.authority
   if (headers.origin !== undefined) headers.origin = `http://${instance.authority}`
@@ -468,16 +530,48 @@ function buildUpstreamHeaders(req, instance) {
   headers.cookie = instance.cookie ?? ''
   headers['x-forwarded-for'] = clientIp(req)
   headers['x-forwarded-proto'] = 'http'
+  // A gzipped body cannot be edited in place, so request the plain one.
+  if (plain) delete headers['accept-encoding']
   return headers
 }
 
+/**
+ * Buffer a client bundle, patch it, and answer with the result. Falls back to
+ * the untouched body whenever the patch does not match, so an upstream change
+ * degrades to stock behaviour instead of breaking the page.
+ */
+async function servePatched(upRes, res, headers, url) {
+  const chunks = []
+  for await (const chunk of upRes) chunks.push(chunk)
+  const original = Buffer.concat(chunks)
+  const text = applyLanSettingsPatch(original.toString('utf8'))
+
+  if (text === undefined) {
+    res.writeHead(upRes.statusCode ?? 502, headers)
+    res.end(original)
+    return
+  }
+
+  const body = Buffer.from(text, 'utf8')
+  delete headers['content-encoding']
+  headers['content-length'] = String(body.byteLength)
+  res.writeHead(upRes.statusCode ?? 502, headers)
+  res.end(body)
+
+  if (!patchApplied) {
+    patchApplied = true
+    process.stdout.write(`[gateway] LAN settings patch applied (${url})\n`)
+  }
+}
+
 function proxy(req, res, instance, { retried = false } = {}) {
+  const patchable = isPatchableAsset(req.url)
   const upstream = http.request({
     host: '127.0.0.1',
     port: instance.port,
     method: req.method,
     path: req.url,
-    headers: buildUpstreamHeaders(req, instance),
+    headers: buildUpstreamHeaders(req, instance, { plain: patchable }),
   }, (upRes) => {
     if (upRes.statusCode === 401 && !retried) {
       upRes.resume()
@@ -492,6 +586,14 @@ function proxy(req, res, instance, { retried = false } = {}) {
     delete headers.connection
     delete headers['keep-alive']
     delete headers['transfer-encoding']
+
+    if (patchable) {
+      servePatched(upRes, res, headers, req.url).catch(() => {
+        if (!res.headersSent) sendUnavailable(res)
+      })
+      return
+    }
+
     res.writeHead(upRes.statusCode ?? 502, headers)
     upRes.pipe(res)
   })
@@ -681,6 +783,7 @@ server.listen(PORT, BIND, () => {
   process.stdout.write(`[gateway] licence database: ${DB_PATH}\n`)
   process.stdout.write(`[gateway] per-licence instances: ports ${String(PORT_BASE + 1)}+, max ${String(MAX_INSTANCES)}, idle reclaim ${String(Math.round(IDLE_REAP_MS / 60000))}m\n`)
   process.stdout.write(`[gateway] authentication: ${AUTH_DISABLED ? 'DISABLED' : 'enabled'}\n`)
+  process.stdout.write(`[gateway] LAN settings patch: ${LAN_SETTINGS_PATCH ? 'enabled' : 'off'}\n`)
 })
 
 function shutdown() {

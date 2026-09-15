@@ -391,11 +391,80 @@ DSH_LLM_MODEL=deepseek-chat
 
 ### 5.5 同事能否自行配置模型？
 
-**可以，而且只影响他自己。**
+dsh 自带「设置 → 模型」页面。因为本方案为每位同事分配了**独立的 `DSH_HOME`**，
+同事的修改只会写进他自己的 `settings.yaml`，不会影响别人，也不会影响你 `.env` 里的配置。
 
-dsh 自带「设置 → 模型」页面，同事登录后可以自己增删模型、切换默认模型、
-调整上下文长度等。因为本方案为每位同事分配了**独立的 `DSH_HOME`**，
-这些修改只会写进他自己的 `settings.yaml`，不会影响别人，也不会影响你 `.env` 里的配置。
+**但这里有一个 dsh 自身的限制，必须知道。**
+
+#### ⚠️ 非回环访问时，配置页默认不可用
+
+dsh 内部有这样一段判断：
+
+```js
+isLoopback: transport?.ownsHost === true || pageLocation === void 0
+          || isLoopbackHostname(pageLocation.hostname)
+```
+
+`pageLocation` 就是浏览器地址栏。然后：
+
+```js
+persistence = isLoopback ? 'host' : 'memory'   // 非回环 → memory
+```
+
+`memory` 模式下配置加载函数会**直接返回、什么都不做**，于是页面报：
+
+> 加载提供方目录失败: settings are unavailable in this browser
+
+| 同事的访问方式 | isLoopback | 配置页 |
+|---|---|---|
+| `http://localhost:8080` | true | ✅ 正常 |
+| `http://内网IP:8080` | false | ❌ 报错 |
+
+**这跟模型、端口、HTTP/HTTPS、容器化都无关**，纯粹由"用 IP 访问"触发。
+注意：自己在本机用 `localhost` 测试时**发现不了**这个问题，必须用内网 IP 测。
+
+#### 开启方案：让网关修正这一判断
+
+在 `.env` 里加一行即可：
+
+```ini
+GATEWAY_ENABLE_LAN_SETTINGS=1
+```
+
+网关会在把客户端代码发给浏览器时，把上面那段判断改成 `isLoopback: true`。
+`isLoopback` 在 dsh 中**只被配置页和通用设置页读取**，不守护任何安全边界；
+且每位同事本就是独立实例、独立 `DSH_HOME`，改的只是自己的配置。
+
+**这个补丁的代价要说清楚**：
+
+- 它改写的是 dsh 的**生成代码**，属于版本相关的适配
+- dsh 升级后如果那行代码变了，补丁会**自动失效并回退为原样**（不会把页面弄坏），
+  此时需要重新确认匹配串。网关日志会打印 `LAN settings patch applied` 或 `off`
+- 关闭该开关时，返回给浏览器的代码与官方**逐字节一致**
+
+**验证是否生效**：
+
+```bash
+# 容器日志应显示 enabled
+docker compose logs dsh | grep 'LAN settings'
+
+# 拉取客户端代码，确认已被改写
+curl -s -b <你的cookie> "http://<服务器>:<端口>/plugins/??@deepseek-ai/dsh-client-connection/client.js" | grep -c 'isLoopback: true,'
+```
+
+#### 如果你不想用补丁
+
+不开这个开关也能用，只是同事改不了模型设置：
+
+| 功能 | 同事能否使用 |
+|---|---|
+| 对话、写代码 | ✅ 正常 |
+| 输入框敲 `/model` 切换模型 | ✅ 通常可用（走会话模型目录，不走配置页） |
+| 设置 → 模型页面 | ❌ 不可用 |
+
+你在 `.env` 里用 `DSH_LLM_MODELS` 配好要开放的模型即可，同事用 `/model` 切换。
+
+#### 配置归属规则（与补丁无关，一直有效）
 
 配置的归属是这样划分的：
 
