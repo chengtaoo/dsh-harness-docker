@@ -1,0 +1,21 @@
+# 构建产物：镜像包通过 Docker 仓库分发，不入库（单个约 190MB）
+dist/
+
+# 本地部署数据
+data/
+workspaces/
+
+# 真实环境配置（含内网地址与密钥），只提交 .env.example
+.env
+.env.local
+
+# 运行时产物
+*.log
+instances.json
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

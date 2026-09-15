@@ -1,0 +1,19 @@
+# Shell scripts and the Dockerfile must keep LF endings. With CRLF they fail
+# inside the Linux container — the entrypoint dies on `\r` with a confusing
+# "no such file or directory" from the kernel, not the shell.
+* text=auto eol=lf
+
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.mjs           text eol=lf
+*.js            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+*.md            text eol=lf
+
+*.png           binary
+*.jpg           binary
+*.gz            binary
+*.tar           binary
+*.zip           binary

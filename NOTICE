@@ -1,0 +1,35 @@
+# NOTICE
+
+## 非官方声明
+
+本项目是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`）的
+**第三方社区封装**，由 chengtaoo 独立维护，**与 DeepSeek AI 不存在任何隶属、赞助或背书关系**。
+
+本仓库只包含容器化封装、授权网关与部署工具，**不包含 `dsh` 的源代码**。
+构建镜像时会从 npm 官方源安装其发布包。
+
+请不要使用 DeepSeek 的名称、商标或品牌标识暗示本项目的官方身份。
+
+## 再分发的第三方组件
+
+构建出的 Docker 镜像**再分发**了以下第三方软件，均随镜像保留了其原始许可证：
+
+| 组件 | 许可证 | 版权 | 用途 |
+|---|---|---|---|
+| [`@deepseek-ai/dsh`](https://www.npmjs.com/package/@deepseek-ai/dsh) 及其依赖 | MIT | Copyright (c) DeepSeek AI | Agent 运行时本体 |
+| Node.js | MIT | Copyright (c) Node.js contributors | 运行时 |
+| Debian bookworm-slim 基础镜像 | 多种开源许可证 | Debian 项目及各上游作者 | 基础系统 |
+
+`@deepseek-ai/dsh` 通过 npm 安装，其完整依赖树与许可证清单见上游仓库的
+[THIRD_PARTY_NOTICES.md](https://github.com/deepseek-ai/deepseek-harness/blob/master/THIRD_PARTY_NOTICES.md)。
+在镜像内可通过以下命令查看已安装组件的版本与许可证：
+
+```bash
+docker run --rm --entrypoint sh dsh-harness:0.1.5-rc.1 -c \
+  'cat /app/node_modules/@deepseek-ai/dsh/package.json | head -20'
+```
+
+## 分发时的义务
+
+MIT 许可证允许商业与非商业再分发，条件是**保留原始版权声明与许可证文本**。
+如果你把本镜像分发给他人（包括公司内部），请一并提供本 NOTICE 与 LICENSE 文件。

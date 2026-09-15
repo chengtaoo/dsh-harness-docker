@@ -1,0 +1,67 @@
+# DeepSeek Harness — 单容器多用户部署
+#
+# 一个容器即可服务多位同事：网关按授权码为每个人拉起独立的 dsh 实例，
+# 会话历史与工作目录彼此隔离。
+#
+#   docker compose up -d
+#   docker compose exec dsh dsh-license add --label "张三" --days 365
+
+services:
+  dsh:
+    image: dsh-harness:0.1.5-rc.1
+    container_name: dsh
+    restart: unless-stopped
+
+    ports:
+      # 左边是服务器对外端口，可按需修改（如 "80:8080"）
+      - "8080:8080"
+
+    environment:
+      # ── 内网模型接入（必填）──────────────────────────────────────────
+      # 指向内网 OpenAI 格式的 DeepSeek 服务，需带 /v1 后缀
+      DSH_LLM_BASE_URL: "${DSH_LLM_BASE_URL:?必须设置内网模型地址}"
+      DSH_LLM_API_KEY: "${DSH_LLM_API_KEY:-sk-intranet}"
+      DSH_LLM_MODEL: "${DSH_LLM_MODEL:-deepseek-chat}"
+      DSH_LLM_MODELS: "${DSH_LLM_MODELS:-}"
+      DSH_LLM_PROVIDER_LABEL: "${DSH_LLM_PROVIDER_LABEL:-内网 DeepSeek}"
+      DSH_LLM_CONTEXT_WINDOW: "${DSH_LLM_CONTEXT_WINDOW:-131072}"
+      DSH_LLM_MAX_TOKENS: "${DSH_LLM_MAX_TOKENS:-8192}"
+
+      # 网关兼容开关。若模型服务报 400/不支持某些字段，优先调整这几项。
+      DSH_LLM_SUPPORTS_DEVELOPER_ROLE: "${DSH_LLM_SUPPORTS_DEVELOPER_ROLE:-false}"
+      DSH_LLM_MAX_TOKENS_FIELD: "${DSH_LLM_MAX_TOKENS_FIELD:-max_tokens}"
+      DSH_LLM_THINKING_FORMAT: "${DSH_LLM_THINKING_FORMAT:-}"
+
+      # ── 授权与容量 ──────────────────────────────────────────────────
+      GATEWAY_SESSION_TTL_HOURS: "${GATEWAY_SESSION_TTL_HOURS:-12}"
+      GATEWAY_IDLE_MINUTES: "${GATEWAY_IDLE_MINUTES:-30}"
+      GATEWAY_MAX_INSTANCES: "${GATEWAY_MAX_INSTANCES:-10}"
+
+    volumes:
+      # 授权库、每位用户的 DSH_HOME 与会话历史
+      - dsh-data:/data
+      # 每位同事的工作目录，位于 /workspace/<备注>-<授权码后缀>/
+      - ./workspaces:/workspace
+
+    # 每个在线用户约占用 200–300MB 内存，按 GATEWAY_MAX_INSTANCES 估算上限。
+    # 如果服务器内存紧张，请调小 GATEWAY_MAX_INSTANCES 或本项限额。
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 8g
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/__auth/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  dsh-data:

@@ -1,0 +1,6 @@
+_probe/
+dist/
+*.tar
+*.tar.gz
+*.log
+.git/
