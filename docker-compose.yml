@@ -1,54 +1,61 @@
-# DeepSeek Harness — 单容器多用户部署
+# DeepSeek Harness —— 多用户部署编排
 #
-# 一个容器即可服务多位同事：网关按授权码为每个人拉起独立的 dsh 实例，
-# 会话历史与工作目录彼此隔离。
+# 本文件只定义「结构」，具体「配置值」全部来自同目录的 .env 文件。
+# 这样密钥不会进入被 git 跟踪的文件，可以安全提交到公开仓库。
 #
+# 使用：
+#   cp .env.example .env     # 首次：复制模板
+#   vi .env                  # 填写模型地址与密钥
 #   docker compose up -d
-#   docker compose exec dsh dsh-license add --label "张三" --days 365
+#
+# .env 由 docker compose 自动加载，无需任何额外参数。
+# 若某个变量在 .env 中缺失，下方 ${VAR:-默认值} 里的默认值会生效。
 
 services:
   dsh:
-    image: dsh-harness:0.1.5-rc.1
+    # 本地已构建的镜像。改用 Docker Hub 上的公开镜像时，在 .env 里设：
+    #   DSH_IMAGE=dockertest416/dsh-harness:0.1.5-rc.1
+    image: "${DSH_IMAGE:-dsh-harness:0.1.5-rc.1}"
     container_name: dsh
     restart: unless-stopped
 
     ports:
-      # 左边是服务器对外端口，可按需修改（如 "80:8080"）
-      - "8080:8080"
+      # 宿主机端口。对外端口在 .env 里改 DSH_PORT，如 DSH_PORT=80
+      - "${DSH_PORT:-8080}:8080"
 
     environment:
-      # ── 内网模型接入（必填）──────────────────────────────────────────
-      # 指向内网 OpenAI 格式的 DeepSeek 服务，需带 /v1 后缀
-      DSH_LLM_BASE_URL: "${DSH_LLM_BASE_URL:?必须设置内网模型地址}"
-      DSH_LLM_API_KEY: "${DSH_LLM_API_KEY:-sk-intranet}"
-      DSH_LLM_MODEL: "${DSH_LLM_MODEL:-deepseek-chat}"
-      DSH_LLM_MODELS: "${DSH_LLM_MODELS:-}"
-      DSH_LLM_PROVIDER_LABEL: "${DSH_LLM_PROVIDER_LABEL:-内网 DeepSeek}"
-      DSH_LLM_CONTEXT_WINDOW: "${DSH_LLM_CONTEXT_WINDOW:-131072}"
-      DSH_LLM_MAX_TOKENS: "${DSH_LLM_MAX_TOKENS:-8192}"
+      # ── 模型接入 ────────────────────────────────────────────────────────
+      # 唯一必填项。未设置时 compose 会直接报错，而不是启动后才失败。
+      DSH_LLM_BASE_URL: "${DSH_LLM_BASE_URL:?请在 .env 中设置 DSH_LLM_BASE_URL}"
 
-      # 网关兼容开关。若模型服务报 400/不支持某些字段，优先调整这几项。
+      DSH_LLM_API_KEY: "${DSH_LLM_API_KEY:-sk-intranet}"
+      DSH_LLM_MODEL: "${DSH_LLM_MODEL:-deepseek-flash}"
+      # 额外可切换的模型，逗号分隔；留空则只暴露上面那一个
+      DSH_LLM_MODELS: "${DSH_LLM_MODELS:-}"
+      DSH_LLM_PROVIDER_LABEL: "${DSH_LLM_PROVIDER_LABEL:-模型服务}"
+
+      # 上下文窗口。越长单次请求越贵，agent 会话很容易撑满，建议按需设置。
+      DSH_LLM_CONTEXT_WINDOW: "${DSH_LLM_CONTEXT_WINDOW:-131072}"
+      # 单次最大输出。思考模式下推理过程也占这里的额度，设太小会截断长输出。
+      DSH_LLM_MAX_TOKENS: "${DSH_LLM_MAX_TOKENS:-32768}"
+
+      # ── 兼容开关（模型服务不兼容时的调节点）─────────────────────────────
       DSH_LLM_SUPPORTS_DEVELOPER_ROLE: "${DSH_LLM_SUPPORTS_DEVELOPER_ROLE:-false}"
       DSH_LLM_MAX_TOKENS_FIELD: "${DSH_LLM_MAX_TOKENS_FIELD:-max_tokens}"
+      # 仅 DeepSeek 系模型需要；其他服务留空
       DSH_LLM_THINKING_FORMAT: "${DSH_LLM_THINKING_FORMAT:-}"
+      DSH_LLM_REASONING_EFFORT: "${DSH_LLM_REASONING_EFFORT:-}"
 
-      # ── 授权与容量 ──────────────────────────────────────────────────
+      # ── 授权与容量 ──────────────────────────────────────────────────────
       GATEWAY_SESSION_TTL_HOURS: "${GATEWAY_SESSION_TTL_HOURS:-12}"
       GATEWAY_IDLE_MINUTES: "${GATEWAY_IDLE_MINUTES:-30}"
       GATEWAY_MAX_INSTANCES: "${GATEWAY_MAX_INSTANCES:-10}"
 
     volumes:
-      # 授权库、每位用户的 DSH_HOME 与会话历史
+      # 授权库、每位用户的会话历史与配置
       - dsh-data:/data
-      # 每位同事的工作目录，位于 /workspace/<备注>-<授权码后缀>/
+      # 每位用户的工作目录，位于 ./workspaces/<备注>-<授权码后缀>/
       - ./workspaces:/workspace
-
-    # 每个在线用户约占用 200–300MB 内存，按 GATEWAY_MAX_INSTANCES 估算上限。
-    # 如果服务器内存紧张，请调小 GATEWAY_MAX_INSTANCES 或本项限额。
-    # deploy:
-    #   resources:
-    #     limits:
-    #       memory: 8g
 
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/__auth/healthz"]
