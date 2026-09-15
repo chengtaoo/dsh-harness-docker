@@ -10,8 +10,14 @@
  * speaks `openai-completions` and accepts an arbitrary baseURL, which is what
  * an intranet vLLM / SGLang / Ollama / one-api gateway exposes.
  *
- * A file we generated carries GENERATED_MARKER; if a human has since edited it
- * (marker removed) it is left alone, so hand-tuning and the Web UI both win.
+ * Ownership split, chosen so that neither side silently loses work:
+ *
+ *   settings.yaml      seeded once per user, then owned by that user. dsh's
+ *                      Models page writes here, so a colleague can pick their
+ *                      own model. Set DSH_CONFIG_OVERWRITE=1 to take it back.
+ *   .credentials.yaml  the key named by DSH_LLM_API_KEY is refreshed on every
+ *                      start, so rotating a leaked key propagates to everyone
+ *                      without touching individual users. Other refs are kept.
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -81,18 +87,24 @@ fs.mkdirSync(DSH_HOME, { recursive: true, mode: 0o700 })
 
 /* ── settings.yaml ───────────────────────────────────────────────────────── */
 
+/*
+ * The environment seeds a user's settings.yaml ONCE; after that the user owns
+ * it, because dsh's own Models page writes here.
+ *
+ * A marker comment cannot be used to tell "generated" from "user-edited":
+ * dsh's settings writer is comment-preserving, so a UI edit keeps the marker
+ * and the next instance start would silently revert the user's change. That is
+ * why the rule below keys off the file merely existing, not off its contents.
+ *
+ * DSH_CONFIG_OVERWRITE=1 switches to admin-managed mode: regenerate on every
+ * start, so nobody can keep a local override.
+ */
 const settingsBody = `${GENERATED_MARKER}\n${yaml.dump(settings, { lineWidth: 120, noRefs: true })}`
-let writeSettings = true
-if (fs.existsSync(SETTINGS)) {
-  const current = fs.readFileSync(SETTINGS, 'utf8')
-  if (!current.startsWith(GENERATED_MARKER)) {
-    writeSettings = false
-    process.stdout.write('[config] settings.yaml was hand-edited; leaving it untouched\n')
-  } else if (current === settingsBody) {
-    writeSettings = false
-  }
-}
-if (writeSettings) {
+const overwrite = process.env.DSH_CONFIG_OVERWRITE === '1'
+
+if (fs.existsSync(SETTINGS) && !overwrite) {
+  process.stdout.write('[config] settings.yaml already exists; keeping it (user changes preserved)\n')
+} else {
   fs.writeFileSync(SETTINGS, settingsBody, { mode: 0o600 })
   process.stdout.write(`[config] wrote ${SETTINGS} (route "${provider}" → ${baseUrl})\n`)
 }
@@ -117,8 +129,14 @@ if (!env.DSH_LLM_API_KEY) {
   process.stdout.write('[config] DSH_LLM_API_KEY unset; using a placeholder key\n')
 }
 if (credentials.refs.DSH_INTRANET_LLM_KEY !== apiKey) {
+  const replacing = credentials.refs.DSH_INTRANET_LLM_KEY !== undefined
   credentials.refs.DSH_INTRANET_LLM_KEY = apiKey
   fs.writeFileSync(CREDENTIALS, yaml.dump(credentials, { noRefs: true }), { mode: 0o600 })
+  // Say so explicitly: silently replacing a credential is how a user ends up
+  // wondering why the key they set in the UI stopped working.
+  process.stdout.write(replacing
+    ? '[config] refreshed the managed API key from the environment (DSH_LLM_API_KEY)\n'
+    : '[config] stored the API key from the environment\n')
 }
 
 // dsh refuses to boot if the credential file is group/world readable.

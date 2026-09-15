@@ -46,6 +46,11 @@ services:
       DSH_LLM_THINKING_FORMAT: "${DSH_LLM_THINKING_FORMAT:-}"
       DSH_LLM_REASONING_EFFORT: "${DSH_LLM_REASONING_EFFORT:-}"
 
+      # ── 配置归属 ────────────────────────────────────────────────────────
+      # 默认（留空）：同事可在界面上自行改模型，改动保留。
+      # 设为 1：每次启动都用 .env 重新生成，同事改不动（管理员统一管控）。
+      DSH_CONFIG_OVERWRITE: "${DSH_CONFIG_OVERWRITE:-}"
+
       # ── 授权与容量 ──────────────────────────────────────────────────────
       GATEWAY_SESSION_TTL_HOURS: "${GATEWAY_SESSION_TTL_HOURS:-12}"
       GATEWAY_IDLE_MINUTES: "${GATEWAY_IDLE_MINUTES:-30}"
