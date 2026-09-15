@@ -1,0 +1,20 @@
+# 把新会话的默认智能体预设从 standard 改为 ptc。
+#
+# 背景：在 MindIE 等对工具定义挑剔的推理服务上，standard / cordis 预设会因
+# 发送大量独立的工具 JSON Schema 而被拒（422），而 ptc / minimal 正常。
+# ptc 把同样的工具集以「生成的 SDK」形式交给模型，功能不减但请求形状不同。
+#
+# 用法：把本文件放到数据卷的 overlays 目录，重启容器即可。
+#
+#   docker cp default-preset-ptc.cordis.yml dsh:/data/overlays/
+#   docker compose restart dsh
+#
+# 容器启动时会把 /data/overlays/*.yml 作为 --patch 覆盖层传给 dsh。
+# 停止使用：删除该文件并重启。
+#
+# 注意：这只改「新会话的默认值」。用户仍可在界面上选择其他预设，
+# 若要彻底避免误选，需在内网侧屏蔽 standard / cordis（本项目暂未提供该开关）。
+
+- id: agent-presets
+  config:
+    default: ptc
