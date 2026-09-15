@@ -67,7 +67,8 @@ See the Chinese documentation below for the full guide.
 | `docker-compose.yml` | 推荐的单容器多用户部署编排 |
 | `.env.example` | 环境变量模板 |
 | `build.sh` | 构建并导出离线 tar 包 |
-| `dist/dsh-harness-0.1.5-rc.1.tar.gz` | **可直接导入的镜像包** |
+| `dist/dsh-harness-0.1.5-rc.1.tar.gz` | **可直接导入的镜像包**（适合内网离线分发） |
+| `dockertest416/dsh-harness` | Docker Hub **私有**仓库，标签 `0.1.5-rc.1` 与 `latest` |
 | `_probe/accept.mjs` | 部署后自检脚本：登录、代理、`/api`、WebSocket 全链路 |
 | `_probe/mock-llm.mjs` | 本地模拟 OpenAI 端点，没有模型服务时可用于自测 |
 
@@ -134,12 +135,26 @@ dsh 自身**没有多用户概念**，直接暴露会踩三个坑：
 
 ## 三、快速开始（在服务器上）
 
+**方式一**：从 Docker Hub 私有仓库拉取（服务器能访问 Docker Hub 时）
+
+```bash
+# 1. 登录（私有仓库需要授权，用 Docker Hub 的 Access Token 作为密码）
+docker login -u dockertest416
+docker pull dockertest416/dsh-harness:0.1.5-rc.1
+docker tag dockertest416/dsh-harness:0.1.5-rc.1 dsh-harness:0.1.5-rc.1
+```
+
+**方式二**：离线导入 tar 包（内网无外网时）
+
 假设你已经拿到 `dsh-harness-0.1.5-rc.1.tar.gz`。
 
 ```bash
-# 1. 导入镜像
 docker load -i dsh-harness-0.1.5-rc.1.tar.gz
+```
 
+然后继续：
+
+```bash
 # 2. 准备目录与配置
 mkdir -p /opt/dsh && cd /opt/dsh
 #   把 docker-compose.yml、.env.example 复制过来
