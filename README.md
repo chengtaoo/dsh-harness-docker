@@ -260,8 +260,43 @@ DSH_LLM_BASE_URL=http://10.0.0.5:8000/v1
 DSH_LLM_MODEL=deepseek-chat
 ```
 
-`DSH_LLM_BASE_URL` 必须带 `/v1` 后缀，指向内网 OpenAI 兼容服务的根路径。
-支持 vLLM、SGLang、Ollama、Xinference、one-api、FastChat 等任何 OpenAI 格式服务。
+支持 vLLM、SGLang、Ollama、Xinference、one-api、FastChat 等任何 OpenAI 格式服务，
+也支持 DeepSeek 官方 API。
+
+**关于 `/v1` 后缀**——两种服务端实现不一样，这是最容易填错的地方：
+
+| 服务端 | 地址写法 |
+|---|---|
+| 官方 DeepSeek API | `https://api.deepseek.com`（**不带** `/v1`） |
+| 自建推理服务 | `http://10.0.0.5:8000/v1`（**通常要带**） |
+
+判断方法：在能访问该服务的机器上执行下面这条，返回模型列表的地址就是对的。
+
+```bash
+curl -H "Authorization: Bearer 你的密钥" https://api.deepseek.com/models
+```
+
+### 5.1.1 使用 DeepSeek 官方 API
+
+官方 API 的模型名与自建服务不同，且**官方模型名会随版本更新**，以
+[官方文档](https://api-docs.deepseek.com/quick_start/pricing) 为准。
+截至本文撰写时（2026-09）为 `deepseek-flash` 与 `deepseek-v4-pro`：
+
+```ini
+DSH_LLM_BASE_URL=https://api.deepseek.com
+DSH_LLM_API_KEY=sk-你的密钥
+DSH_LLM_MODEL=deepseek-flash
+DSH_LLM_MODELS=deepseek-flash:DeepSeek Flash,deepseek-v4-pro:DeepSeek V4 Pro
+DSH_LLM_PROVIDER_LABEL=DeepSeek 官方
+DSH_LLM_CONTEXT_WINDOW=1048576
+DSH_LLM_MAX_TOKENS=8192
+DSH_LLM_SUPPORTS_DEVELOPER_ROLE=false
+DSH_LLM_MAX_TOKENS_FIELD=max_tokens
+DSH_LLM_THINKING_FORMAT=deepseek
+```
+
+> ⚠️ 官方 API 走公网。如果你的服务器是**完全离线**的内网环境，这条路径不可用，
+> 必须改用内网自建模型服务。容器需要能出网访问 `api.deepseek.com`。
 
 ### 5.2 配置是怎么生效的
 
