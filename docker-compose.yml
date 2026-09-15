@@ -54,6 +54,7 @@ services:
       # ── 授权与容量 ──────────────────────────────────────────────────────
       GATEWAY_SESSION_TTL_HOURS: "${GATEWAY_SESSION_TTL_HOURS:-12}"
       GATEWAY_IDLE_MINUTES: "${GATEWAY_IDLE_MINUTES:-30}"
+      # 每个在线用户是一个独立 dsh 进程，实测约 600MB；无人在线时约 90MB
       GATEWAY_MAX_INSTANCES: "${GATEWAY_MAX_INSTANCES:-10}"
 
     volumes:

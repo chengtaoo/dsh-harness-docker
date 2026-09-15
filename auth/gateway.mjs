@@ -216,7 +216,8 @@ class DshInstance {
         await this.ensureCookie(true)
         this.ready = true
         process.stdout.write(`[gateway] instance ready for ${this.slug} on ${this.authority}\n`)
-        writeInstanceState()
+        // The snapshot is written by the caller, after this instance is in the
+        // map — writing here would record an empty list.
         return this
       } catch {
         await sleep(700)
@@ -304,8 +305,13 @@ function ensureInstance(key) {
   const row = db.prepare('SELECT label FROM licenses WHERE key = ?').get(key)
   const instance = new DshInstance(key, row?.label ?? '')
   const task = serializeStart(() => instance.start())
-    .then((i) => { starting.delete(key); instances.set(key, i); return i })
-    .catch((error) => { starting.delete(key); instance.stop(); throw error })
+    .then((i) => {
+      starting.delete(key)
+      instances.set(key, i)
+      writeInstanceState()
+      return i
+    })
+    .catch((error) => { starting.delete(key); instance.stop(); writeInstanceState(); throw error })
   starting.set(key, task)
   return task
 }
