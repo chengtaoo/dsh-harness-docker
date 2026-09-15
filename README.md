@@ -41,7 +41,10 @@ dsh's token exchange server-side so browsers never see it.
 **Quick start**
 
 ```bash
-docker load -i dsh-harness-0.1.5-rc.1.tar.gz
+# Pull from Docker Hub (public image), or: docker load -i dsh-harness-0.1.5-rc.1.tar.gz
+docker pull dockertest416/dsh-harness:0.1.5-rc.1
+docker tag dockertest416/dsh-harness:0.1.5-rc.1 dsh-harness:0.1.5-rc.1
+
 cp .env.example .env && vi .env      # set DSH_LLM_BASE_URL and DSH_LLM_MODEL
 docker compose up -d
 docker compose exec dsh dsh-license add --label "alice" --days 365
@@ -68,7 +71,7 @@ See the Chinese documentation below for the full guide.
 | `.env.example` | 环境变量模板 |
 | `build.sh` | 构建并导出离线 tar 包 |
 | `dist/dsh-harness-0.1.5-rc.1.tar.gz` | **可直接导入的镜像包**（适合内网离线分发） |
-| `dockertest416/dsh-harness` | Docker Hub **私有**仓库，标签 `0.1.5-rc.1` 与 `latest` |
+| `dockertest416/dsh-harness` | Docker Hub **公开**仓库，标签 `0.1.5-rc.1` 与 `latest` |
 | `_probe/accept.mjs` | 部署后自检脚本：登录、代理、`/api`、WebSocket 全链路 |
 | `_probe/mock-llm.mjs` | 本地模拟 OpenAI 端点，没有模型服务时可用于自测 |
 
@@ -135,11 +138,9 @@ dsh 自身**没有多用户概念**，直接暴露会踩三个坑：
 
 ## 三、快速开始（在服务器上）
 
-**方式一**：从 Docker Hub 私有仓库拉取（服务器能访问 Docker Hub 时）
+**方式一**：从 Docker Hub 拉取（服务器能访问 Docker Hub 时，公开仓库无需登录）
 
 ```bash
-# 1. 登录（私有仓库需要授权，用 Docker Hub 的 Access Token 作为密码）
-docker login -u dockertest416
 docker pull dockertest416/dsh-harness:0.1.5-rc.1
 docker tag dockertest416/dsh-harness:0.1.5-rc.1 dsh-harness:0.1.5-rc.1
 ```
