@@ -34,9 +34,16 @@ dsh's token exchange server-side so browsers never see it.
 
 - Licence-key login with SQLite storage (no external database)
 - Per-user isolation: separate process, `DSH_HOME`, session history and workspace
+- Per-user model configuration that survives instance recycling
 - Fully offline: no runtime internet access required (`--network none` verified)
 - Works against any OpenAI-compatible endpoint on an intranet (vLLM / SGLang / Ollama / one-api)
 - Ship as a single `docker load`-able tarball or a registry image
+
+**One dsh limitation this works around.** dsh offers its settings subsystem only to pages
+opened from a loopback hostname, so colleagues reaching the UI by IP get an inert Models page.
+`GATEWAY_ENABLE_LAN_SETTINGS=1` has the gateway correct that judgement as it serves the client
+bundle. The flag guards no security boundary, and every user already owns a separate instance —
+see §5.5.
 
 **Quick start**
 
@@ -66,13 +73,17 @@ See the Chinese documentation below for the full guide.
 | `auth/admin.mjs` | 授权码管理命令行（容器内 `dsh-license`） |
 | `auth/lib.mjs` | SQLite 授权库读写 |
 | `auth/render-config.mjs` | 把环境变量渲染成 dsh 配置 |
+| `auth/capture-proxy.mjs` | 诊断代理：记录 dsh 发给模型服务的完整请求（排查模型侧问题用） |
 | `entrypoint.sh` | 容器启动脚本 |
 | `docker-compose.yml` | 推荐的单容器多用户部署编排 |
 | `.env.example` | 环境变量模板 |
+| `examples/default-preset-ptc.cordis.yml` | 预设覆盖示例：把默认预设改为 PTC |
 | `build.sh` | 构建并导出离线 tar 包 |
 | `dist/dsh-harness-0.1.5-rc.1.tar.gz` | **可直接导入的镜像包**（适合内网离线分发） |
 | `dockertest416/dsh-harness` | Docker Hub **公开**仓库，标签 `0.1.5-rc.1` 与 `latest` |
 | `_probe/accept.mjs` | 部署后自检脚本：登录、代理、`/api`、WebSocket 全链路 |
+| `_probe/diagnose-endpoint.sh` | 模型端点逐项诊断 |
+| `_probe/replay-bisect.sh` | 用真实请求体逐项剥离，定位被拒字段 |
 | `_probe/mock-llm.mjs` | 本地模拟 OpenAI 端点，没有模型服务时可用于自测 |
 
 `_probe/` 只是测试脚手架，不会被打进镜像（已在 `.dockerignore` 中排除）。
@@ -778,25 +789,76 @@ docker compose up -d
 
 ---
 
+### 9.7 某些推理服务上部分预设无法使用
+
+**现象**：同事能登录、能选模型，但一发消息就报 422，例如：
+
+```
+Messages token length must be in (0, 1048576], but got 0.
+```
+
+**原因**：不同**智能体预设**发送给模型服务的请求形状不同。
+
+| 预设 | 工具呈现方式 | 对推理服务的要求 |
+|---|---|---|
+| 标准 / 创造 | 逐个独立的 OpenAI 工具定义（各带完整 JSON Schema） | 较高 |
+| PTC | 同样的工具集，但以**生成的 SDK** 形式交给模型 | 较低 |
+| 极简 | 不发送任何工具 | 最低 |
+
+部分推理服务（实测遇到的是华为昇腾 **MindIE Server**）无法处理第一种形状，
+但对 PTC 的形状完全接受。**这不是本方案的缺陷，也不是容器问题**。
+
+**诊断方法**：先确认是哪一个环节。本项目的 `_probe/` 提供了两个工具：
+
+```bash
+# 1) 逐项二分：定位是哪个字段被拒
+bash _probe/replay-bisect.sh http://你的模型地址/v1 你的密钥
+
+# 2) 抓真实请求：dsh 直连模型服务，网关看不到这些请求
+docker exec -d dsh node /app/auth/capture-proxy.mjs \
+  --target http://你的模型地址 --port 1080
+# 然后把 .env 的地址临时改为 http://127.0.0.1:1080/v1 并重启，复现后看 /data/logs/captured/
+```
+
+**两种解决方向**：
+
+1. **换预设**（最快）。把默认预设改为 PTC，功能不减：
+
+   ```bash
+   docker cp examples/default-preset-ptc.cordis.yml dsh:/data/overlays/
+   docker compose restart dsh
+   ```
+
+2. **换适配层**（根治）。在模型服务前加一层与官方 API 完全兼容的网关，
+   使其能接受完整的工具定义。实测这样处理之后四种预设都能正常工作。
+
+> 注意：`_probe/diagnose-endpoint.sh` 早期版本用 `node` 生成测试载荷，
+> 在未装 Node 的服务器上会产出空载荷导致**假阳性**。该问题已修复，
+> 现在载荷为空时会跳过而非发送。
+
 ## 十、环境变量全表
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DSH_LLM_BASE_URL` | **必填** | 内网 OpenAI 兼容服务地址，含 `/v1` |
+| `DSH_IMAGE` | `dsh-harness:0.1.5-rc.1` | 镜像名。用仓库镜像时改为 `dockertest416/dsh-harness:0.1.5-rc.1` |
+| `DSH_PORT` | `8080` | 宿主机对外端口（容器内始终是 8080） |
+| `DSH_LLM_BASE_URL` | **必填** | 模型服务地址。官方 API 不带 `/v1`，自建服务通常要带 |
 | `DSH_LLM_API_KEY` | `sk-intranet` | 模型服务密钥 |
-| `DSH_LLM_MODEL` | `deepseek-chat` | 默认模型 ID |
-| `DSH_LLM_MODELS` | 空 | 额外模型列表，逗号分隔 |
-| `DSH_LLM_PROVIDER_LABEL` | `内网 DeepSeek` | 界面上显示的服务名 |
+| `DSH_LLM_MODEL` | `deepseek-flash` | 默认模型 ID |
+| `DSH_LLM_MODELS` | 空 | 界面可切换的模型，逗号分隔，可写 `id:显示名` |
+| `DSH_LLM_PROVIDER_LABEL` | `模型服务` | 界面上显示的服务名 |
 | `DSH_LLM_CONTEXT_WINDOW` | `131072` | 上下文窗口 |
-| `DSH_LLM_MAX_TOKENS` | `8192` | 单次最大输出 |
+| `DSH_LLM_MAX_TOKENS` | `32768` | 单次最大输出 |
 | `DSH_LLM_SUPPORTS_DEVELOPER_ROLE` | `false` | 兼容开关 |
-| `DSH_LLM_MAX_TOKENS_FIELD` | `max_tokens` | 兼容开关 |
-| `DSH_LLM_THINKING_FORMAT` | 空 | 设为 `deepseek` 启用思考模式 |
+| `DSH_LLM_MAX_TOKENS_FIELD` | `max_tokens` | 兼容开关。留空则用 dsh 默认的 `max_completion_tokens` |
+| `DSH_LLM_THINKING_FORMAT` | 空 | 仅 DeepSeek 系模型设为 `deepseek` |
 | `DSH_LLM_REASONING_EFFORT` | 空 | `off` / `low` / `high` / `max` |
-| `GATEWAY_PORT` | `8080` | 对外监听端口 |
+| `GATEWAY_ENABLE_LAN_SETTINGS` | 未设置 | 设为 `1` 修复非回环访问时配置页不可用（见 §5.5） |
+| `DSH_CONFIG_OVERWRITE` | 未设置 | 设为 `1` 则每次启动都用 `.env` 重写用户配置（收回配置权） |
+| `GATEWAY_PORT` | `8080` | 容器内监听端口（一般不必改） |
 | `GATEWAY_SESSION_TTL_HOURS` | `12` | 登录态时长 |
 | `GATEWAY_IDLE_MINUTES` | `30` | 闲置回收实例的阈值 |
-| `GATEWAY_MAX_INSTANCES` | `10` | 同时在线人数上限 |
+| `GATEWAY_MAX_INSTANCES` | `10` | 同时在线人数上限（每人约 600MB 内存） |
 | `GATEWAY_WORKSPACE_ROOT` | `/workspace` | 工作目录根 |
 | `GATEWAY_INSTANCE_PORT_BASE` | `3100` | 内部实例端口起始值 |
 | `GATEWAY_AUTH_DISABLED` | 未设置 | 设为 `1` 关闭授权（**仅调试用**） |
@@ -821,8 +883,33 @@ docker compose up -d
 - **断网启动**：以 `--network none` 完全断网运行，容器正常启动、实例就绪、Web UI 正常加载
 - **离线分发**：`docker save` → `docker load` 全流程验证，导入耗时约 13 秒
 - **文档流程**：按 README 的 compose 步骤从零部署并跑通全部验收项
+- **配置持久化**：用户在界面上改的模型配置，实例回收重启后仍然保留（`_probe/test-settings-persist.sh`）
+- **非回环设置页修复**：开关关闭时返回字节与官方一致；开启时精确改写该判断（原始判断残留 0 次）
+- **发布镜像**：删除全部本地镜像 → 匿名拉取 → 检查内容 → 启动 → 功能验证，五步全过
 
 各项的实测脚本保存在 `_probe/`，可随时复跑。
+
+---
+
+## 十二、更新记录
+
+### 2026-09 内网实测后的修复
+
+在内网（华为昇腾 MindIE Server + 自建网关）实际部署后，发现并修复了以下问题：
+
+| 问题 | 现象 | 处理 |
+|---|---|---|
+| **非回环访问配置页不可用** | 同事用 IP 访问时「设置 → 模型」报 `settings are unavailable in this browser`；用 localhost 测试发现不了 | 新增 `GATEWAY_ENABLE_LAN_SETTINGS=1` 开关，网关在发送客户端代码时修正该判断（§5.5） |
+| **界面配置静默丢失** | dsh 的配置写入器保留注释，导致"标记注释判断归属"失效，同事改的模型在实例回收后被覆盖 | 改为文件存在即不覆盖；新增 `DSH_CONFIG_OVERWRITE=1` 作为管理员管控开关 |
+| **部分预设报 422** | 标准 / 创造预设被 MindIE 拒绝，PTC / 极简正常 | 属后端兼容性，非本方案问题；提供 `_probe/` 诊断工具与预设切换方案（§9.7） |
+| **诊断脚本假阳性** | 脚本用 `node` 生成载荷，服务器未装 Node 时发出空 body，被误读为服务端拒绝 | 改为纯 bash 构造；载荷为空时跳过而非发送 |
+
+**关于「配置页」这条的定位过程**（留作参考，避免重复踩坑）：
+本地用 `localhost` 测试一切正常 → 内网用 IP 访问即失败。
+根因是 dsh 内部 `isLoopbackHostname(pageLocation.hostname)` 判断，
+`pageLocation` 就是浏览器地址栏，**用 IP 访问必然为 false**，
+于是设置子系统降级到 `memory` 模式（加载函数直接返回）。
+所以这类问题**必须用内网 IP 复现**，本地 localhost 测不出来。
 
 ---
 
