@@ -539,8 +539,17 @@ function buildUpstreamHeaders(req, instance, { plain = false } = {}) {
  * Buffer a client bundle, patch it, and answer with the result. Falls back to
  * the untouched body whenever the patch does not match, so an upstream change
  * degrades to stock behaviour instead of breaking the page.
+ *
+ * Cache headers matter here. dsh ships these bundles as
+ * `max-age=31536000, immutable` because their URL carries a build revision —
+ * but a patched bundle differs from the bytes that URL names, and the revision
+ * cannot be changed (dsh rejects a mismatch). Left alone, a browser that loaded
+ * the unpatched bundle first would keep serving it for a year and the patch
+ * would appear to do nothing. So a patched response is revalidated instead:
+ * `no-cache` plus an ETag over the patched bytes, which stays cheap (304) while
+ * guaranteeing the browser can never hold a stale copy.
  */
-async function servePatched(upRes, res, headers, url) {
+async function servePatched(req, upRes, res, headers, url) {
   const chunks = []
   for await (const chunk of upRes) chunks.push(chunk)
   const original = Buffer.concat(chunks)
@@ -553,8 +562,17 @@ async function servePatched(upRes, res, headers, url) {
   }
 
   const body = Buffer.from(text, 'utf8')
+  const etag = `"lanpatch-${crypto.createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { etag, 'cache-control': 'no-cache' })
+    res.end()
+    return
+  }
+
   delete headers['content-encoding']
   headers['content-length'] = String(body.byteLength)
+  headers['cache-control'] = 'no-cache'
+  headers.etag = etag
   res.writeHead(upRes.statusCode ?? 502, headers)
   res.end(body)
 
@@ -588,7 +606,7 @@ function proxy(req, res, instance, { retried = false } = {}) {
     delete headers['transfer-encoding']
 
     if (patchable) {
-      servePatched(upRes, res, headers, req.url).catch(() => {
+      servePatched(req, upRes, res, headers, req.url).catch(() => {
         if (!res.headersSent) sendUnavailable(res)
       })
       return
